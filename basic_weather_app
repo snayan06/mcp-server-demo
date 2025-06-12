@@ -1,0 +1,82 @@
+import requests
+from openai import OpenAI
+
+# ------------------------------------------------------------------------------
+# 🧠 STEP 0: OpenAI Client Initialization
+# ------------------------------------------------------------------------------
+client = OpenAI(
+)
+
+# ------------------------------------------------------------------------------
+# 🌍 STEP 1: Geocode the City Name to Latitude/Longitude
+# ------------------------------------------------------------------------------
+city = "Pune, India"
+geo_resp = requests.get(
+    "https://geocoding-api.open-meteo.com/v1/search", 
+    params={"name": city, "count": 1}
+)
+geo_resp.raise_for_status()
+
+geo_data = geo_resp.json().get("results", [{}])[0]
+LATITUDE = geo_data.get("latitude")
+LONGITUDE = geo_data.get("longitude")
+
+# ------------------------------------------------------------------------------
+# 🌦 STEP 2: Fetch Current Weather Using Open-Meteo API (No API key needed)
+# ------------------------------------------------------------------------------
+weather_resp = requests.get(
+    "https://api.open-meteo.com/v1/forecast",
+    params={"latitude": LATITUDE, "longitude": LONGITUDE, "current_weather": True},
+    timeout=10,
+)
+weather_resp.raise_for_status()
+
+weather = weather_resp.json().get("current_weather", {})
+
+# ------------------------------------------------------------------------------
+# 📝 STEP 3: Inject Weather Data as Freeform Text into a Prompt
+# ------------------------------------------------------------------------------
+plain_prompt = f"""
+You are a weather assistant.
+Here's the current weather in {city}:
+  • Temperature: {weather.get('temperature')}°C
+  • Wind Speed: {weather.get('windspeed')} km/h
+  • Wind Direction: {weather.get('winddirection')}°
+Write a friendly weather summary.
+"""
+
+# ------------------------------------------------------------------------------
+# 🤖 STEP 4: Call OpenAI GPT-4o with the Raw Prompt
+# ------------------------------------------------------------------------------
+response = client.chat.completions.create(
+    model="gpt-4o",
+    messages=[{"role": "user", "content": plain_prompt}]
+)
+
+# ------------------------------------------------------------------------------
+# 📤 STEP 5: Display the Resulting Summary from the Model
+# ------------------------------------------------------------------------------
+print(f"🕰 Old-style summary for {city}:")
+print(response.choices[0].message.content)
+
+# ------------------------------------------------------------------------------
+# ❗️ WHY THIS APPROACH DOESN’T SCALE (to be shown in the talk)
+# ------------------------------------------------------------------------------
+"""
+🚨 Limitations of this legacy approach (pre-Function Calling, pre-Tool Use, pre-MCP):
+
+1. ❌ Prompt Stuffing
+
+2. ❌ No Schema or Structure
+
+3. ❌ No Separation of Concerns
+
+4. ❌ Zero Observability or Reusability
+
+5. ❌ Assumes Happy Path
+
+🔥 TL;DR:
+This worked *okay* for demos. But in real-world applications, especially agentic systems,
+you need schema, structure, error handling, traceability, and reusability 
+
+"""

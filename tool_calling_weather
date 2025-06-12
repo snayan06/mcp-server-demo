@@ -1,0 +1,166 @@
+import os
+import requests
+from openai import OpenAI
+import json
+
+# ------------------------------------------------------------------------------
+# 🔑 Initialize OpenAI Client
+# ------------------------------------------------------------------------------
+client = OpenAI(
+)
+# ------------------------------------------------------------------------------
+# 🌐 External APIs
+# ------------------------------------------------------------------------------
+GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
+WEATHER_URL = "https://api.open-meteo.com/v1/forecast"
+TIMEOUT = 10
+
+# ------------------------------------------------------------------------------
+# 🛠️ TOOL FUNCTION: Resolve location and fetch current weather
+# ------------------------------------------------------------------------------
+def get_weather(location: str) -> dict:
+    geo_resp = requests.get(
+        GEOCODING_URL, params={"name": location, "count": 1}, timeout=TIMEOUT
+    )
+    geo_resp.raise_for_status()
+    results = geo_resp.json().get("results", [])
+    if not results:
+        raise RuntimeError(f"No geocoding results for '{location}'")
+
+    lat = results[0]["latitude"]
+    lon = results[0]["longitude"]
+
+    weather_resp = requests.get(
+        WEATHER_URL,
+        params={"latitude": lat, "longitude": lon, "current_weather": True},
+        timeout=TIMEOUT,
+    )
+    weather_resp.raise_for_status()
+    current = weather_resp.json().get("current_weather")
+    if not current:
+        raise RuntimeError("Missing 'current_weather' in response")
+
+    return {
+        "temperature": current["temperature"],
+        "wind_speed": current["windspeed"],
+        "wind_direction": current["winddirection"],
+    }
+
+# ------------------------------------------------------------------------------
+# 🧰 TOOL SCHEMA (JSON Spec)
+# ------------------------------------------------------------------------------
+tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_weather",
+            "description": "Get current temperature, wind speed, and direction for a given location.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "location": {
+                        "type": "string",
+                        "description": "City and country, e.g., 'Pune, India'"
+                    }
+                },
+                "required": ["location"],
+                "additionalProperties": False
+            }
+        }
+    }
+]
+
+# ------------------------------------------------------------------------------
+# 🚀 TOOL EXECUTOR (Executes tool based on model request)
+# ------------------------------------------------------------------------------
+def execute_tool_call(tool_call):
+    """Dispatch the tool call to the correct local function."""
+    name = tool_call.function.name
+    args = json.loads(tool_call.function.arguments)
+
+    if name == "get_weather":
+        return get_weather(**args)
+    else:
+        raise NotImplementedError(f"Tool '{name}' is not implemented.")
+
+# ------------------------------------------------------------------------------
+# 🧠 MAIN FLOW: Model selects a tool, executes, and gets final response
+# ------------------------------------------------------------------------------
+if __name__ == "__main__":
+    user_query = "What's the weather in Pune, India?"
+
+    # 1️⃣ Model generates tool call
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": user_query}],
+        tools=tools,
+        tool_choice="auto"
+    )
+
+    tool_calls = response.choices[0].message.tool_calls
+
+    if tool_calls:
+        tool_call = tool_calls[0]
+        tool_output = execute_tool_call(tool_call)
+
+        # 2️⃣ Pass tool output back to model for summarization
+        final_response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "user", "content": user_query},
+                {"role": "assistant", "tool_calls": [tool_call]},
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "name": tool_call.function.name,
+                    "content": json.dumps(tool_output)
+                }
+            ]
+        )
+
+        print(final_response.choices[0].message.content)
+
+    else:
+        print(response.choices[0].message.content)
+        
+# ------------------------------------------------------------------------------
+# 🧾 Limitations of This Tool Calling Approach (Why It Falls Short)
+# ------------------------------------------------------------------------------
+
+# 1. 🔧 Manual Tool Routing:
+#    - Every new tool needs to be added manually in both `tools` and the executor logic.
+#    - Hard to scale as the number of tools grows.
+
+# 2. 🧠 No Memory or State:
+#    - This is a single-turn interaction. There is no conversation memory or chaining of thoughts.
+#    - No user session tracking or context propagation across steps.
+
+# 3. 🧰 Poor Tool Reusability:
+#    - Tools are tightly coupled to a specific prompt and model flow.
+#    - No generic orchestration or composition of tools (e.g., tool A then tool B).
+
+# 4. 🔍 No Observability or Control:
+#    - No centralized logging or trace of tool calls, errors, or retries.
+#    - Errors from tools break the flow; no fallback logic or retry strategy.
+
+# 5. 🧱 Not Composable:
+#    - You can’t build workflows or dynamic tool plans.
+#    - All tool logic is imperative and lives in code — not declarative or pluggable.
+
+# 6. ⚙️ No Abstraction Layer:
+#    - Tools don’t live in a registry or catalog.
+#    - There's no centralized place to manage, audit, version, or document tools.
+
+# 👉 TL;DR:
+# This approach was revolutionary when introduced (goodbye plain prompts!), 
+# but it's still developer-centric and lacks orchestration intelligence.
+
+# ✅ Enter MCP (Model Control Plane):
+# A structured orchestration layer that adds:
+#   • Tool planning
+#   • Reusable tool registries
+#   • Stateful task management
+#   • Fallbacks and retries
+#   • Chain-of-thought plans
+#   • Monitoring and observability
+# It's not just *tool calling* — it's *agentic architecture at scale*.
