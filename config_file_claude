@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "weather": {
+      "command": "/Users/nayanshah/.local/bin/uv",
+      "args": [
+        "--directory",
+        "/Users/nayanshah/Desktop/code/experiments/github/MCP/mcp-server-demo",
+        "run",
+        "weather.py"
+      ]
+    }
+  }
+}
